@@ -130,8 +130,8 @@ class CloudinaryToS3Migrator {
   }
 
   async processBatch(resources) {
-    // Use p-limit for controlled concurrency
-    const pLimit = require('p-limit').default;
+  // Use p-limit for controlled concurrency
+  const pLimit = (await import('p-limit')).default;
     const concurrency = parseInt(process.env.MIGRATION_CONCURRENCY) || 10; // Default to 10
     const limit = pLimit(concurrency);
 

@@ -96,23 +96,28 @@ class CloudinaryToS3Migrator {
   }
 
   async processBatch(resources) {
-    for (const resource of resources) {
-      try {
-        const result = await this.migrateAsset(resource);
-        if (result === 'migrated') {
-          this.migratedCount++;
-        } else if (result === 'skipped') {
-          this.skippedCount++;
-        }
-      } catch (error) {
-        console.error(`❌ Failed to migrate ${resource.public_id}:`, error.message);
-        this.failedCount++;
-        this.failedAssets.push({
-          public_id: resource.public_id,
-          error: error.message
-        });
-      }
-    }
+    // Use p-limit for controlled concurrency
+    const pLimit = require('p-limit').default;
+    const concurrency = parseInt(process.env.MIGRATION_CONCURRENCY) || 10; // Default to 10
+    const limit = pLimit(concurrency);
+
+    const tasks = resources.map(resource =>
+      limit(() => this.migrateAsset(resource)
+        .then(result => {
+          if (result === 'migrated') this.migratedCount++;
+          else if (result === 'skipped') this.skippedCount++;
+        })
+        .catch(error => {
+          console.error(`❌ Failed to migrate ${resource.public_id}:`, error.message);
+          this.failedCount++;
+          this.failedAssets.push({
+            public_id: resource.public_id,
+            error: error.message
+          });
+        })
+      )
+    );
+    await Promise.all(tasks);
   }
 
   async migrateAsset(resource) {
@@ -260,10 +265,17 @@ class CloudinaryToS3Migrator {
       this.skippedAssets.slice(0, 10).forEach(asset => {
         console.log(`  - ${asset.public_id}: ${asset.reason}`);
       });
-      
       if (this.skippedAssets.length > 10) {
         console.log(`  ... and ${this.skippedAssets.length - 10} more`);
       }
+      // Write skipped assets to file for review
+      const skippedAssetsFile = path.join(__dirname, 'skipped-assets.json');
+      fs.writeFileSync(skippedAssetsFile, JSON.stringify(this.skippedAssets, null, 2));
+      console.log(`\nSkipped assets logged to: ${skippedAssetsFile}`);
+      // Also write to a new file for retry
+      const skippedMigrationsFile = path.join(__dirname, 'skipped-migrations.json');
+      fs.writeFileSync(skippedMigrationsFile, JSON.stringify(this.skippedAssets, null, 2));
+      console.log(`Skipped migrations for retry logged to: ${skippedMigrationsFile}`);
     }
 
     if (this.failedAssets.length > 0) {
@@ -271,18 +283,10 @@ class CloudinaryToS3Migrator {
       this.failedAssets.forEach(asset => {
         console.log(`  - ${asset.public_id}: ${asset.error}`);
       });
-
       // Write failed assets to file for review
       const failedAssetsFile = path.join(__dirname, 'failed-assets.json');
       fs.writeFileSync(failedAssetsFile, JSON.stringify(this.failedAssets, null, 2));
       console.log(`\nFailed assets logged to: ${failedAssetsFile}`);
-    }
-
-    // Write skipped assets to file for review
-    if (this.skippedAssets.length > 0) {
-      const skippedAssetsFile = path.join(__dirname, 'skipped-assets.json');
-      fs.writeFileSync(skippedAssetsFile, JSON.stringify(this.skippedAssets, null, 2));
-      console.log(`\nSkipped assets logged to: ${skippedAssetsFile}`);
     }
 
     console.log('\n✨ Migration summary complete!');

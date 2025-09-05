@@ -13,13 +13,19 @@
     "verify": "node verify.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["cloudinary", "aws", "s3", "migration"],
+  "keywords": [
+    "cloudinary",
+    "aws",
+    "s3",
+    "migration"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "cloudinary": "^1.41.3",
     "aws-sdk": "^2.1692.0",
+    "axios": "^1.11.0",
+    "cloudinary": "^1.41.3",
     "dotenv": "^16.6.1",
-    "axios": "^1.11.0"
+    "p-limit": "^7.1.1"
   }
 }

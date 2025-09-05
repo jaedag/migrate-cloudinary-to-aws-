@@ -52,11 +52,15 @@ class CloudinaryToS3Migrator {
     this.migratedCount = 0;
     this.failedCount = 0;
     this.skippedCount = 0;
+    this.deletedCount = 0;
+    this.deleteFailedCount = 0;
     this.totalCount = 0;
     this.failedAssets = [];
     this.skippedAssets = [];
+    this.deleteFailedAssets = [];
     this.skipExisting = options.skipExisting !== false; // Default to true
     this.forceOverwrite = options.forceOverwrite === true; // Default to false
+    this.deleteFromCloudinary = options.deleteFromCloudinary !== false; // Default to true
   }
 
   async migrate() {
@@ -66,6 +70,7 @@ class CloudinaryToS3Migrator {
     console.log(`Batch size: ${MAX_RESULTS}`);
     console.log(`Skip existing files: ${this.skipExisting ? 'Yes' : 'No'}`);
     console.log(`Force overwrite: ${this.forceOverwrite ? 'Yes' : 'No'}`);
+    console.log(`Delete from Cloudinary: ${this.deleteFromCloudinary ? 'Yes' : 'No'}`);
     console.log('---');
 
     // Fetch total asset count from Cloudinary
@@ -108,7 +113,7 @@ class CloudinaryToS3Migrator {
         await this.processBatch(result.resources);
 
         // Send Slack notification after each batch, including total Cloudinary count
-        await notifySlack(`Batch completed: ${result.resources.length} assets processed.\nMigrated: ${this.migratedCount}, Skipped: ${this.skippedCount}, Failed: ${this.failedCount}, Total processed: ${this.totalCount} / ${totalCloudinaryCount}`);
+        await notifySlack(`Batch completed: ${result.resources.length} assets processed.\nMigrated: ${this.migratedCount}, Skipped: ${this.skippedCount}, Failed: ${this.failedCount}, Deleted: ${this.deletedCount}, Delete Failed: ${this.deleteFailedCount}, Total processed: ${this.totalCount} / ${totalCloudinaryCount}`);
 
         if (result.next_cursor) {
           nextCursor = result.next_cursor;
@@ -117,7 +122,7 @@ class CloudinaryToS3Migrator {
         }
 
         // Progress update
-        console.log(`Progress: ${this.migratedCount} migrated, ${this.skippedCount} skipped, ${this.failedCount} failed, ${this.totalCount} / ${totalCloudinaryCount} total processed`);
+        console.log(`Progress: ${this.migratedCount} migrated, ${this.skippedCount} skipped, ${this.failedCount} failed, ${this.deletedCount} deleted, ${this.deleteFailedCount} delete failed, ${this.totalCount} / ${totalCloudinaryCount} total processed`);
         console.log('---');
 
       } catch (error) {
@@ -136,20 +141,37 @@ class CloudinaryToS3Migrator {
     const limit = pLimit(concurrency);
 
     const tasks = resources.map(resource =>
-      limit(() => this.migrateAsset(resource)
-        .then(result => {
+      limit(async () => {
+        try {
+          const result = await this.migrateAsset(resource);
+          
+          // Delete from Cloudinary if migration or skip was successful
+          if (this.deleteFromCloudinary && (result === 'migrated' || result === 'skipped')) {
+            try {
+              await this.deleteFromCloudinaryAsset(resource);
+              this.deletedCount++;
+              console.log(`🗑️  Deleted from Cloudinary: ${resource.public_id}`);
+            } catch (deleteError) {
+              console.error(`❌ Failed to delete from Cloudinary ${resource.public_id}:`, deleteError.message);
+              this.deleteFailedCount++;
+              this.deleteFailedAssets.push({
+                public_id: resource.public_id,
+                error: deleteError.message
+              });
+            }
+          }
+
           if (result === 'migrated') this.migratedCount++;
           else if (result === 'skipped') this.skippedCount++;
-        })
-        .catch(error => {
+        } catch (error) {
           console.error(`❌ Failed to migrate ${resource.public_id}:`, error.message);
           this.failedCount++;
           this.failedAssets.push({
             public_id: resource.public_id,
             error: error.message
           });
-        })
-      )
+        }
+      })
     );
     await Promise.all(tasks);
   }
@@ -192,6 +214,16 @@ class CloudinaryToS3Migrator {
 
     console.log(`✅ Migrated: ${public_id}.${format}`);
     return 'migrated';
+  }
+
+  async deleteFromCloudinaryAsset(resource) {
+    const { public_id, resource_type } = resource;
+    
+    // Use the appropriate deletion method based on resource type
+    await cloudinary.api.delete_resources([public_id], {
+      resource_type: resource_type || 'image',
+      type: DELIVERY_TYPE
+    });
   }
 
   async checkS3FileExists(s3Key) {
@@ -293,6 +325,8 @@ class CloudinaryToS3Migrator {
     console.log(`Successfully migrated: ${this.migratedCount}`);
     console.log(`Skipped (already exist): ${this.skippedCount}`);
     console.log(`Failed: ${this.failedCount}`);
+    console.log(`Deleted from Cloudinary: ${this.deletedCount}`);
+    console.log(`Failed to delete from Cloudinary: ${this.deleteFailedCount}`);
 
     if (this.skippedAssets.length > 0) {
       console.log('\n⏭️ Skipped assets (first 10):');
@@ -323,6 +357,17 @@ class CloudinaryToS3Migrator {
       console.log(`\nFailed assets logged to: ${failedAssetsFile}`);
     }
 
+    if (this.deleteFailedAssets.length > 0) {
+      console.log('\n❌ Failed to delete from Cloudinary:');
+      this.deleteFailedAssets.forEach(asset => {
+        console.log(`  - ${asset.public_id}: ${asset.error}`);
+      });
+      // Write failed deletion assets to file for review
+      const deleteFailedAssetsFile = path.join(__dirname, 'delete-failed-assets.json');
+      fs.writeFileSync(deleteFailedAssetsFile, JSON.stringify(this.deleteFailedAssets, null, 2));
+      console.log(`\nFailed deletion assets logged to: ${deleteFailedAssetsFile}`);
+    }
+
     console.log('\n✨ Migration summary complete!');
   }
 }
@@ -346,6 +391,9 @@ async function main() {
       case '--force-overwrite':
         options.forceOverwrite = true;
         options.skipExisting = false; // Force overwrite implies no skipping
+        break;
+      case '--no-delete':
+        options.deleteFromCloudinary = false;
         break;
       case '--help':
         printHelp();
@@ -392,14 +440,18 @@ Options:
   --skip-existing       Skip files that already exist in S3 (default)
   --no-skip-existing    Process all files, even if they exist in S3
   --force-overwrite     Force overwrite existing files in S3
+  --no-delete          Do not delete assets from Cloudinary after successful migration/skip
   --help               Show this help message
 
 Examples:
-  # Default migration (skips existing files)
+  # Default migration (skips existing files and deletes from Cloudinary)
   node migrate.js
 
-  # Force overwrite all files
+  # Force overwrite all files and delete from Cloudinary
   node migrate.js --force-overwrite
+
+  # Migrate without deleting from Cloudinary
+  node migrate.js --no-delete
 
   # Process all files without checking existence
   node migrate.js --no-skip-existing

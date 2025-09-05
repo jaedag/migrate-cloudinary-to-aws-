@@ -1,3 +1,20 @@
+// Slack webhook integration
+
+async function notifySlack(message) {
+  const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || 'YOUR_WEBHOOK_URL_HERE';
+  if (!SLACK_WEBHOOK_URL || SLACK_WEBHOOK_URL === 'YOUR_WEBHOOK_URL_HERE') {
+    console.warn('Slack webhook URL not set. Skipping Slack notification.');
+    return;
+  }
+  try {
+    await axios.post(SLACK_WEBHOOK_URL, {
+      text: message,
+    });
+    console.log('📣 Slack notification sent.');
+  } catch (error) {
+    console.error('Failed to send Slack notification:', error.message);
+  }
+}
 require('dotenv').config();
 const cloudinary = require('cloudinary').v2;
 const AWS = require('aws-sdk');
@@ -51,6 +68,20 @@ class CloudinaryToS3Migrator {
     console.log(`Force overwrite: ${this.forceOverwrite ? 'Yes' : 'No'}`);
     console.log('---');
 
+    // Fetch total asset count from Cloudinary
+    let totalCloudinaryCount = 0;
+    try {
+      const countResult = await cloudinary.api.resources({
+        resource_type: RESOURCE_TYPE,
+        type: DELIVERY_TYPE,
+        max_results: 1
+      });
+      totalCloudinaryCount = countResult.total_count || 0;
+      console.log(`Total assets in Cloudinary: ${totalCloudinaryCount}`);
+    } catch (err) {
+      console.warn('Could not fetch total Cloudinary asset count:', err.message);
+    }
+
     let nextCursor = null;
     let hasMore = true;
 
@@ -76,6 +107,9 @@ class CloudinaryToS3Migrator {
 
         await this.processBatch(result.resources);
 
+        // Send Slack notification after each batch, including total Cloudinary count
+        await notifySlack(`Batch completed: ${result.resources.length} assets processed.\nMigrated: ${this.migratedCount}, Skipped: ${this.skippedCount}, Failed: ${this.failedCount}, Total processed: ${this.totalCount} / ${totalCloudinaryCount}`);
+
         if (result.next_cursor) {
           nextCursor = result.next_cursor;
         } else {
@@ -83,7 +117,7 @@ class CloudinaryToS3Migrator {
         }
 
         // Progress update
-        console.log(`Progress: ${this.migratedCount} migrated, ${this.skippedCount} skipped, ${this.failedCount} failed, ${this.totalCount} total processed`);
+        console.log(`Progress: ${this.migratedCount} migrated, ${this.skippedCount} skipped, ${this.failedCount} failed, ${this.totalCount} / ${totalCloudinaryCount} total processed`);
         console.log('---');
 
       } catch (error) {

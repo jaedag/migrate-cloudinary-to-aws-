@@ -1,0 +1,30 @@
+# Environment variables
+.env
+
+# Node modules
+node_modules/
+
+# Downloaded assets (temporary)
+downloads/
+
+# Log files
+*.log
+
+# Analysis reports
+cloudinary-analysis-*.json
+
+# Failed migration records
+failed-assets.json
+skipped-assets.json
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

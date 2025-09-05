@@ -1,0 +1,25 @@
+{
+  "name": "cloudinary-to-s3-migration",
+  "version": "1.0.0",
+  "description": "Migrate assets from Cloudinary to AWS S3 bucket",
+  "main": "migrate.js",
+  "scripts": {
+    "start": "node migrate.js",
+    "migrate": "node migrate.js",
+    "migrate:force": "node migrate.js --force-overwrite",
+    "migrate:all": "node migrate.js --no-skip-existing",
+    "selective": "node selective-migrate.js",
+    "analyze": "node analyze.js",
+    "verify": "node verify.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["cloudinary", "aws", "s3", "migration"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cloudinary": "^1.41.3",
+    "aws-sdk": "^2.1692.0",
+    "dotenv": "^16.6.1",
+    "axios": "^1.11.0"
+  }
+}

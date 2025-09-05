@@ -69,7 +69,7 @@ class CloudinaryToS3Migrator {
     console.log('---');
 
     // Fetch total asset count from Cloudinary
-    let totalCloudinaryCount = 0;
+    let totalCloudinaryCount = 1500000;
     try {
       const countResult = await cloudinary.api.resources({
         resource_type: RESOURCE_TYPE,
